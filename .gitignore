@@ -7,3 +7,5 @@ server/server.log
 info.txt
 mandato.txt
 PRESENTAZIONE.md
+server/.models/
+probe-*.mjs

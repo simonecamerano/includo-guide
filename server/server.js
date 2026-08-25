@@ -6,6 +6,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { generateEmbedding, getChatResponse } from './utils/ai.js';
+import { warmUpEmbeddings } from './utils/embeddings.js';
 import { searchVectors } from './utils/db.js';
 
 // Load environment variables
@@ -373,7 +374,7 @@ app.post( '/api/admin/ingest', ingestRateLimit, adminIngestAuth, async ( req, re
         for ( const course of courses ) {
             // Generate a semantic string for the embedding (Title + Area + Description + Skills)
             const textToEmbed = `${course.title} ${course.area} ${course.description} ${course.skills.join( ' ' )}`;
-            const vector = await generateEmbedding( textToEmbed );
+            const vector = await generateEmbedding( textToEmbed, 'passage' );
             vectors.push( { id: course.id, vector, metadata: course } );
         }
 
@@ -503,6 +504,10 @@ const PORT = process.env.PORT || 3001;
 if ( process.env.NODE_ENV !== 'test' ) {
     app.listen( PORT, () => {
         console.log( `IncluDO Enterprise Node.js running on port ${PORT}` );
+        // Load the embedding model now, so the first user does not wait for it.
+        warmUpEmbeddings().catch( ( err ) => {
+            console.error( "Embedding model failed to load:", err.message );
+        } );
     } );
 }
 

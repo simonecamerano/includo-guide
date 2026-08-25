@@ -1,13 +1,14 @@
 /**
- * AI UTILITIES - OpenAI Bridge
- * This module handles the integration with OpenAI APIs for generating
- * vector embeddings and handling chat completions.
+ * AI UTILITIES - Bridge
+ * Single entry point for the two AI capabilities of this application:
+ * vector embeddings, computed locally, and chat completions, served by a provider.
  */
 
 import OpenAI from 'openai';
 import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { embedText } from './embeddings.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -16,32 +17,26 @@ const __dirname = path.dirname(__filename);
 dotenv.config({ path: path.join(__dirname, '../.env') });
 
 /**
- * Global OpenAI client instance.
+ * Lazily built OpenAI client. Built on first use rather than on import, so the
+ * server can boot (and serve retrieval) without a generation key configured.
  */
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+let _openai = null;
+const getOpenAI = () => {
+  if (!_openai) {
+    _openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  }
+  return _openai;
+};
 
 /**
  * GENERATE EMBEDDING
- * Converts a string into a 1536-dimensional vector using OpenAI's embedding model.
- * If no API key is present, it returns a deterministic mock vector for testing.
+ * Converts a string into a 384-dimensional vector using the local model.
+ * No API key and no network call are involved: the text stays on this server.
  * @param {string} text - The input text to vectorize.
+ * @param {'query'|'passage'} [kind='query'] - Search query or indexed document.
  * @returns {Promise<Array<number>>} The resulting vector embedding.
  */
-export const generateEmbedding = async (text) => {
-  // Fallback for environments without an active OpenAI API key
-  if (!process.env.OPENAI_API_KEY || process.env.OPENAI_API_KEY.includes('...')) {
-      const sum = text.split('').reduce((a, b) => a + b.charCodeAt(0), 0);
-      return Array(1536).fill(0).map((_, i) => Math.sin(sum + i) / 2 + 0.5);
-  }
-
-  const response = await openai.embeddings.create({
-    model: "text-embedding-3-small",
-    input: text,
-  });
-  return response.data[0].embedding;
-};
+export const generateEmbedding = async (text, kind = 'query') => embedText(text, kind);
 
 /**
  * GET CHAT RESPONSE
@@ -72,7 +67,7 @@ export const getChatResponse = async (messages, model = "gpt-4o", tools = null) 
 
         if (tools) options.tools = tools;
 
-        return await openai.chat.completions.create(options);
+        return await getOpenAI().chat.completions.create(options);
     } catch (error) {
         console.error("OpenAI Bridge Error:", error.message);
         throw error;
