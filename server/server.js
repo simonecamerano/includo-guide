@@ -20,6 +20,14 @@ app.use( express.json() );
 const __filename = fileURLToPath( import.meta.url );
 const __dirname = path.dirname( __filename );
 
+/**
+ * Frontend - serve the compiled React app from the same origin as the API, so no
+ * external service delivers the pages to visitors. Present only in the built
+ * image; in local development Vite serves the client on its own port.
+ */
+const frontendPath = path.join( __dirname, 'public' );
+app.use( express.static( frontendPath ) );
+
 // --- CONFIGURATION & CONSTANTS ---
 
 /** 
@@ -575,6 +583,20 @@ app.post( '/api/chat', async ( req, res ) => {
         console.error( `Chat sequence error (${failure.category}):`, error.message );
         res.status( 500 ).json( { error: failure.message } );
     }
+} );
+
+/**
+ * SPA fallback - any non-API GET request returns index.html, so a deep link or a
+ * hard refresh still loads the application. Express 5 no longer accepts
+ * app.get('*'), hence the middleware form.
+ */
+app.use( ( req, res, next ) => {
+    if ( req.method !== 'GET' || req.path.startsWith( '/api' ) ) {
+        return next();
+    }
+    res.sendFile( path.join( frontendPath, 'index.html' ), ( err ) => {
+        if ( err ) next();
+    } );
 } );
 
 // --- SERVER INITIALIZATION ---

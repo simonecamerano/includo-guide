@@ -21,15 +21,16 @@ Session Manager
      │
      ▼
 RAG Pipeline
-(query → cosine similarity search → top-k chunks from vector_db.json)
+(local embedding → cosine similarity search → top-k chunks from vector_db.json)
+(the model runs in-process: the query is never sent to a provider)
      │
      ▼
 Modular Prompt Factory
 (system prompt + retrieved context + conversation history + pedagogical constraints)
      │
      ▼
-GPT-4o-mini
-(response generation)
+claude-haiku-4-5
+(response generation, the only external call)
      │
      ▼
 Telegram-style UI
@@ -39,8 +40,9 @@ Telegram-style UI
 **Key architectural decisions:**
 
 - **Custom vector store** over an off-the-shelf solution — the course catalog is small and stable, a local JSON-based store with cosine similarity is faster, cheaper, and fully controllable
+- **Embeddings computed on our own hardware** — the questions people ask a guide about inclusion can reveal a disability, their own or a family member's. Indexing and retrieval therefore never reach a third party: no dependency on external databases *and* none on external providers for indexing
 - **Dual-layer pedagogical constraint** — the "max 2 recommendations" rule is enforced both at the prompt level and validated in the response handler, not left to model discretion
-- **Server-side session persistence** — sessions survive backend restarts via `sessions.json`, with configurable TTL and background pruning
+- **Server-side session persistence** — `sessions.json` with a 30 day TTL, applied on load as well as on the timer, so an expired conversation is never served and never has its clock reset
 - **Admin ingestion API** — catalog updates go through a protected `/api/admin/ingest` endpoint with token auth and rate limiting, not manual file edits
 
 ---
@@ -51,9 +53,9 @@ Telegram-style UI
 |---|---|
 | Frontend | React 19, Vite, Framer Motion, Vanilla CSS |
 | Backend | Node.js 20+ (ESM), Express 5 |
-| AI | OpenAI GPT-4o-mini + Text-Embedding-3-Small |
+| AI | Anthropic `claude-haiku-4-5` for generation, `multilingual-e5-small` running locally for embeddings |
 | Storage | Custom JSON vector store + session persistence |
-| Deployment | Vercel (frontend) + Coolify/DigitalOcean (backend) |
+| Deployment | Single container on Coolify/Hetzner: pages and API on the same origin |
 | Testing | Vitest (backend integration + frontend UI) |
 
 ---
@@ -154,10 +156,13 @@ Tests cover API status codes, AI response logic, session initialization, compone
 
 | Layer | Platform | Notes |
 |---|---|---|
-| Frontend | Vercel | Static deploy, zero config |
-| Backend | Coolify + DigitalOcean | Docker-based, persistent volume for `sessions.json` |
+| Pages + API | Coolify on Hetzner | One container, one domain. The frontend is compiled into the backend's `public/` at build time |
+| Embedding model | Same container | Weights baked into the image, no download at runtime and no external call |
 
-The backend requires a persistent filesystem for session stability. See [DEPLOYMENT.md](./DEPLOYMENT.md) for full configuration details.
+Sessions live on the container filesystem and are therefore reset on every
+redeploy. Mount a persistent volume and point `SESSIONS_DIR` at it if conversation
+continuity across deploys matters. See [DEPLOYMENT.md](./DEPLOYMENT.md) for full
+configuration details.
 
 ---
 

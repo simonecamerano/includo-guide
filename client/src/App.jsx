@@ -5,11 +5,16 @@ import { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
-/** 
- * Backend API base URL. 
- * Defaults to localhost:3001 if the VITE_API_BASE environment variable is not set.
+/**
+ * Backend API base URL.
+ *
+ * In the built application the API answers on the same origin that served the
+ * page, so a relative path is enough and no cross-origin request is made. In
+ * local development Vite serves the client on its own port, so the full address
+ * of the backend is used instead. VITE_API_BASE overrides both.
  */
-const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:3001/api';
+const API_BASE = import.meta.env.VITE_API_BASE
+  || ( import.meta.env.PROD ? '/api' : 'http://localhost:3001/api' );
 
 /**
  * MAIN COMPONENT: IncluDO Chatbot Interface
