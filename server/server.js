@@ -97,19 +97,24 @@ const isString = ( value ) => typeof value === 'string' && value.trim().length >
 const normalizeSessions = ( raw ) => {
     const normalized = {};
     for ( const [sessionId, value] of Object.entries( raw || {} ) ) {
-        // Handle migration from legacy format (array of messages)
-        if ( Array.isArray( value ) ) {
-            normalized[sessionId] = { history: sanitizeHistory( value ), updatedAt: Date.now() };
-            continue;
-        }
+        /**
+         * An entry without a usable timestamp is dropped rather than stamped with
+         * the current time. Stamping it was the previous behaviour and it silently
+         * defeated retention: an undated session got a fresh clock on every
+         * restart, so it would never reach the declared 30 days. If we cannot tell
+         * when a conversation was last touched, we cannot promise when it expires,
+         * and the honest outcome is to not keep it. This also covers the oldest
+         * format, a bare array of messages, which carries no date at all.
+         */
+        if ( !value || Array.isArray( value ) || !Array.isArray( value.history ) ) continue;
 
-        // Handle standard session object
-        if ( value && Array.isArray( value.history ) ) {
-            normalized[sessionId] = {
-                history: sanitizeHistory( value.history ),
-                updatedAt: Number( value.updatedAt ) || Date.now()
-            };
-        }
+        const updatedAt = Number( value.updatedAt );
+        if ( !Number.isFinite( updatedAt ) || updatedAt <= 0 ) continue;
+
+        normalized[sessionId] = {
+            history: sanitizeHistory( value.history ),
+            updatedAt
+        };
     }
     return normalized;
 };
@@ -251,6 +256,15 @@ try {
         // Load and normalize sessions from persistent storage
         const raw = JSON.parse( fs.readFileSync( SESSIONS_PATH, 'utf8' ) );
         sessions = normalizeSessions( raw );
+        /**
+         * Prune on load, not only on the timer. Without this, everything read from
+         * disk stays available until the first scheduled prune, and a visitor
+         * returning with an expired session id would get the old conversation back
+         * and have its clock reset. Today sessions.json dies with the container so
+         * nothing survives anyway, but the moment a persistent volume is mounted
+         * (as DEPLOYMENT.md suggests) the declared 30 days would stop being true.
+         */
+        pruneSessions();
     }
 } catch ( err ) {
     console.error( "Failed to load sessions:", err );
@@ -284,6 +298,15 @@ const getSessionHistory = ( sessionId ) => {
     if ( !session || !Array.isArray( session.history ) ) {
         return [];
     }
+
+    // An expired session must not be served, and must not be revived by being
+    // read: refreshing updatedAt on the way out would restart the retention
+    // clock on a conversation that was already past its declared lifetime.
+    if ( !session.updatedAt || ( Date.now() - session.updatedAt ) > SESSION_TTL_MS ) {
+        delete sessions[sessionId];
+        return [];
+    }
+
     session.updatedAt = Date.now(); // Track access time for pruning
     return session.history;
 };
