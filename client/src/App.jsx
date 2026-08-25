@@ -17,6 +17,15 @@ const API_BASE = import.meta.env.VITE_API_BASE
   || ( import.meta.env.PROD ? '/api' : 'http://localhost:3001/api' );
 
 /**
+ * Opening message, shown both to a brand new visitor and when the server has no
+ * history for an existing session.
+ */
+const WELCOME_MESSAGE = {
+  role: 'assistant',
+  content: "Ciao! Benvenuto in IncluDO Guide. Sono un **sistema di intelligenza artificiale**, non una persona, e posso sbagliare: verifica sempre le informazioni importanti. Sono qui per aiutarti a scoprire il tuo talento artigianale. Le nostre aree di eccellenza sono: **Legno, Tessuti, Ceramica, Pelle e Natura**. Dimmi pure: quale di queste ti piacerebbe esplorare?"
+};
+
+/**
  * MAIN COMPONENT: IncluDO Chatbot Interface
  * Handles state management for conversation history, session persistence, 
  * and communication with the orientation AI.
@@ -36,24 +45,36 @@ function App() {
   /** Controls the visibility of the reset confirmation modal. */
   const [showResetModal, setShowResetModal] = useState( false );
 
-  /** 
-   * Unified Session ID. 
-   * Retrieves an existing ID from localStorage or generates a new one.
-   * This ensures the chat history persists even if the browser is refreshed.
+  /**
+   * Unified Session ID, read from localStorage if a conversation already exists.
+   * Null for a visitor who has never written anything: nothing is stored in the
+   * device until there is a conversation to come back to.
    */
-  const [sessionId] = useState( () => {
-    const saved = localStorage.getItem( 'includo_sid' );
-    if ( saved ) return saved;
-    const newId = ( window.crypto && window.crypto.randomUUID )
-      ? `sid_${window.crypto.randomUUID()}`
-      : `sid_${Date.now()}_${Math.random().toString( 36 ).slice( 2, 10 )}`;
-    localStorage.setItem( 'includo_sid', newId );
-    return newId;
-  } );
+  const [sessionId, setSessionId] = useState( () => localStorage.getItem( 'includo_sid' ) );
 
   /** References for auto-scrolling and input focus management. */
   const scrollRef = useRef( null );
   const inputRef = useRef( null );
+
+  /** Guards the history fetch, which must run once and not again when the id is created. */
+  const historyFetchedRef = useRef( false );
+
+  /**
+   * Creates the session identifier at the first message sent, not when the page
+   * is opened. Someone who opens the site and leaves without writing should not
+   * find a code in their browser, and this is also what the privacy notice
+   * states: the legal basis is the performance of the service requested by
+   * sending a message.
+   */
+  const ensureSessionId = () => {
+    if ( sessionId ) return sessionId;
+    const newId = ( window.crypto && window.crypto.randomUUID )
+      ? `sid_${window.crypto.randomUUID()}`
+      : `sid_${Date.now()}_${Math.random().toString( 36 ).slice( 2, 10 )}`;
+    localStorage.setItem( 'includo_sid', newId );
+    setSessionId( newId );
+    return newId;
+  };
 
   // --- SIDE EFFECTS (Hooks) ---
 
@@ -81,16 +102,23 @@ function App() {
    * If no history exists, pushes a default assistant welcome message.
    */
   useEffect( () => {
+    if ( historyFetchedRef.current ) return;
+    historyFetchedRef.current = true;
+
+    // No session yet: this visitor has never written anything, so there is
+    // nothing to ask the server for.
+    if ( !sessionId ) {
+      setMessages( [WELCOME_MESSAGE] );
+      return;
+    }
+
     const fetchHistory = async () => {
       try {
         const { data } = await axios.get( `${API_BASE}/history/${sessionId}` );
         if ( data.history && data.history.length > 0 ) {
           setMessages( data.history );
         } else {
-          setMessages( [{
-            role: 'assistant',
-            content: "Ciao! Benvenuto in IncluDO Guide. Sono un **sistema di intelligenza artificiale**, non una persona, e posso sbagliare: verifica sempre le informazioni importanti. Sono qui per aiutarti a scoprire il tuo talento artigianale. Le nostre aree di eccellenza sono: **Legno, Tessuti, Ceramica, Pelle e Natura**. Dimmi pure: quale di queste ti piacerebbe esplorare?"
-          }] );
+          setMessages( [WELCOME_MESSAGE] );
         }
       } catch ( err ) {
         console.error( "History fetch failed:", err );
@@ -107,7 +135,15 @@ function App() {
    */
   const resetChat = async () => {
     try {
-      await axios.post( `${API_BASE}/reset`, { sessionId } );
+      // Nothing was ever sent: there is no conversation on the server and no
+      // identifier in the device, so only the visible history is cleared.
+      if ( sessionId ) {
+        await axios.post( `${API_BASE}/reset`, { sessionId } );
+        // The conversation is gone, so its identifier has no reason to stay in
+        // the device either. A new one is created if the visitor writes again.
+        localStorage.removeItem( 'includo_sid' );
+        setSessionId( null );
+      }
       setMessages( [{
         role: 'assistant',
         content: "Reset completato, la conversazione precedente è stata eliminata dal server. Ricomincio da zero, sempre come **sistema di intelligenza artificiale**. Le nostre aree sono: **Legno, Tessuti, Ceramica, Pelle e Natura**. Quale ti incuriosisce di più?"
@@ -134,7 +170,7 @@ function App() {
     try {
       const { data } = await axios.post( `${API_BASE}/chat`, {
         message: input,
-        sessionId: sessionId
+        sessionId: ensureSessionId()
       } );
       setMessages( prev => [...prev, { role: 'assistant', content: data.reply }] );
     } catch ( err ) {

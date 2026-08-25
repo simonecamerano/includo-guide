@@ -119,4 +119,33 @@ describe( 'IncluDO Frontend Integration & UX', () => {
     } );
   } );
 
+  /**
+   * Privacy: nothing is written to the device before the visitor asks for the
+   * service. The session identifier belongs to a conversation, so it may only
+   * appear once a conversation exists.
+   */
+  it( 'writes nothing to the device for a visitor who only opens the page', async () => {
+    window.localStorage.setItem.mockClear();
+    await renderApp();
+    expect( window.localStorage.setItem ).not.toHaveBeenCalled();
+  } );
+
+  it( 'creates the session identifier only when the first message is sent', async () => {
+    window.localStorage.setItem.mockClear();
+    await renderApp();
+
+    axios.post.mockResolvedValueOnce( { data: { reply: 'Prima risposta' } } );
+
+    const input = screen.getByRole( 'textbox' );
+    fireEvent.change( input, { target: { value: 'Primo messaggio' } } );
+    fireEvent.click( screen.getByRole( 'button', { name: /Invia messaggio/i } ) );
+
+    await waitFor( () => {
+      expect( window.localStorage.setItem ).toHaveBeenCalledWith(
+        'includo_sid',
+        expect.stringMatching( /^sid_/ )
+      );
+    } );
+  } );
+
 } );
