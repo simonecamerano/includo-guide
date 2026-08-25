@@ -2,7 +2,7 @@
 
 > Production-ready RAG-powered orientation platform for artisan vocational training.
 
-[![Live Demo](https://img.shields.io/badge/Live-includo--guide.vercel.app-brightgreen?logo=vercel)](https://includo-guide.vercel.app)
+[![Live Demo](https://img.shields.io/badge/Live-includo.simonecamerano.dev-brightgreen)](https://includo.simonecamerano.dev)
 
 Generic chatbots give generic answers. IncluDO Guide is built around a different premise: a structured knowledge base of artisan training paths, a custom vector store with cosine similarity search, and a prompt factory with pedagogical constraints that guarantee focused, relevant recommendations — never more than two courses per session.
 
