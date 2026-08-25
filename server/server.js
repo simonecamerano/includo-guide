@@ -5,7 +5,7 @@ import express from 'express';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { generateEmbedding, getChatResponse } from './utils/ai.js';
+import { describeFailure, extractText, extractToolUses, generateEmbedding, getChatResponse } from './utils/ai.js';
 import { warmUpEmbeddings } from './utils/embeddings.js';
 import { searchVectors } from './utils/db.js';
 
@@ -33,6 +33,40 @@ const SESSION_PRUNE_INTERVAL_MS = Number( process.env.SESSION_PRUNE_INTERVAL_MS 
 
 /** Maximum number of messages stored per session to prevent oversized payloads. */
 const MAX_SESSION_MESSAGES = Number( process.env.MAX_SESSION_MESSAGES || 20 );
+
+/** Search, then synthesize. A third turn would mean the model is looping. */
+const MAX_TOOL_TURNS = 2;
+
+/**
+ * The catalog search exposed to the orientation expert.
+ * Anthropic takes the JSON Schema directly under input_schema, without the
+ * function wrapper the Chat Completions shape required.
+ */
+const SEARCH_COURSES_TOOL = {
+    name: "cerca_corsi",
+    description: "Interroga il catalogo IncluDO per trovare i corsi piu' adatti al profilo raccolto. Usalo solo quando hai tutti e cinque i dati del profilo.",
+    input_schema: {
+        type: "object",
+        properties: {
+            search_query: {
+                type: "string",
+                description: "Descrizione in linguaggio naturale di cio' che l'utente cerca, usata per la ricerca semantica nel catalogo."
+            },
+            user_profile: {
+                type: "object",
+                properties: {
+                    area: { type: "string", enum: ["Legno", "Tessuti", "Ceramica", "Pelle", "Natura"] },
+                    level: { type: "string", enum: ["Principiante", "Intermedio", "Avanzato"] },
+                    objective: { type: "string", enum: ["Lavoro", "Hobby"] },
+                    modality: { type: "string", enum: ["Presenza", "Remoto"] },
+                    hours: { type: "number", description: "Ore disponibili a settimana." }
+                },
+                required: ["area", "level", "objective", "modality", "hours"]
+            }
+        },
+        required: ["search_query", "user_profile"]
+    }
+};
 
 /** Directory and file path for persistent session storage. */
 const SESSIONS_DIR = process.env.SESSIONS_DIR || path.join( __dirname, 'data' );
@@ -65,19 +99,39 @@ const normalizeSessions = ( raw ) => {
     for ( const [sessionId, value] of Object.entries( raw || {} ) ) {
         // Handle migration from legacy format (array of messages)
         if ( Array.isArray( value ) ) {
-            normalized[sessionId] = { history: value, updatedAt: Date.now() };
+            normalized[sessionId] = { history: sanitizeHistory( value ), updatedAt: Date.now() };
             continue;
         }
 
         // Handle standard session object
         if ( value && Array.isArray( value.history ) ) {
             normalized[sessionId] = {
-                history: value.history,
+                history: sanitizeHistory( value.history ),
                 updatedAt: Number( value.updatedAt ) || Date.now()
             };
         }
     }
     return normalized;
+};
+
+/**
+ * Keeps only plain user and assistant turns in a stored history.
+ *
+ * Sessions written before the provider change carried the system prompt as the
+ * first message and could carry tool-call bookkeeping. Both are rejected by the
+ * Messages API, where the system prompt is a top-level parameter, so an old
+ * session would make every following request fail instead of just losing context.
+ *
+ * @param {Array} history - Raw history read from disk.
+ * @returns {Array} Only the turns that are still valid to send.
+ */
+const sanitizeHistory = ( history ) => {
+    if ( !Array.isArray( history ) ) return [];
+    return history.filter( ( entry ) =>
+        entry
+        && ( entry.role === 'user' || entry.role === 'assistant' )
+        && isString( entry.content )
+    ).map( ( entry ) => ( { role: entry.role, content: entry.content } ) );
 };
 
 /**
@@ -220,14 +274,15 @@ const saveSessions = () => {
 
 /**
  * Retrieves the chat history for a specific session.
- * If the session is new, returns a default system prompt.
+ * The system prompt is not part of it: it is a top-level request parameter, so a
+ * new session simply starts empty.
  * @param {string} sessionId - The unique identifier for the user session.
  * @returns {Array} Array of message objects.
  */
 const getSessionHistory = ( sessionId ) => {
     const session = sessions[sessionId];
     if ( !session || !Array.isArray( session.history ) ) {
-        return [{ role: 'system', content: buildSystemPrompt() }];
+        return [];
     }
     session.updatedAt = Date.now(); // Track access time for pruning
     return session.history;
@@ -263,6 +318,12 @@ const buildSystemPrompt = () => `
 # RUOLO
 Sei l'esperto orientatore di 'IncluDO', un progetto no-profit per l'inclusione sociale e la tutela delle tradizioni artigianali.
 
+# TRASPARENZA E DATI PERSONALI
+1. Sei un sistema di intelligenza artificiale basato su tecnologia Anthropic. Se ti viene chiesto chi o cosa sei, dichiara sempre la tua natura artificiale, senza mai sostenere di essere una persona.
+2. Non chiedere MAI dati personali: nome completo, indirizzo, email, telefono, codice fiscale.
+3. Non chiedere MAI informazioni su disabilità, condizioni di salute o situazioni familiari, e non fondare i tuoi consigli su ipotesi in merito. Per orientare bastano area, livello, obiettivo, modalità e ore disponibili.
+4. Se l'utente racconta spontaneamente una condizione personale, accoglila con rispetto, non chiedere dettagli e non ripeterla nelle risposte successive.
+
 # MISSIONE
 Guida l'utente nella scoperta del suo talento e consiglia i 2 corsi migliori dal catalogo ufficiale.
 
@@ -287,7 +348,7 @@ Accogliente, professionale, umano. Rispondi in italiano. 👋
  * @param {Array} matches - The matching courses from the vector store.
  * @returns {string} The results prompt string.
  */
-const buildResultsPrompt = ( profile, matches ) => `
+const buildResultsPrompt = ( profile ) => `
 # ISTRUZIONI DI OUTPUT (SINTESI RAG)
 
 ## DATI UTENTE
@@ -295,10 +356,8 @@ const buildResultsPrompt = ( profile, matches ) => `
 ${JSON.stringify( profile, null, 2 )}
 \`\`\`
 
-## RISULTATI CATALOGO
-\`\`\`json
-${JSON.stringify( matches, null, 2 )}
-\`\`\`
+I risultati del catalogo sono nel risultato del tool qui sopra. Nelle colonne
+'Ore' usa sempre le ore SETTIMANALI (weekly_hours), non quelle totali.
 
 # COMPITO
 Genera una risposta di orientamento professionale strutturata in questo ESATTO ordine:
@@ -312,6 +371,7 @@ Genera una risposta di orientamento professionale strutturata in questo ESATTO o
 3. **Approfondimento**: Spiega le skill principali per ogni corso.
 4. **Precisazione**: Se i dati (es. ore) non coincidono perfettamente con la richiesta, spiegane il motivo in modo onesto.
 
+CONSIGLIA SOLO I 2 CORSI MIGLIORI. Sii sintetico e non ripetere i saluti.
 RISPONDI SEMPRE IN ITALIANO. NON USARE ALTRI FORMATI PER LA TABELLA.
 `;
 
@@ -334,15 +394,11 @@ app.get( '/api/health', ( req, res ) => {
  */
 app.get( '/api/history/:sessionId', ( req, res ) => {
     const history = getSessionHistory( req.params.sessionId );
-    // Filter out ANY technical message: system, tool, tool_calls, or internal synthesis prompts
-    const cleanHistory = history.filter( m => {
-        const isUserOrAssistant = ( m.role === 'user' || m.role === 'assistant' );
-        const hasContent = m.content && m.content.length > 0;
-        const isNotInternalPrompt = !String( m.content ).includes( '# ISTRUZIONI DI OUTPUT' );
-        const isNotToolMessage = !m.tool_calls && m.role !== 'tool';
-
-        return isUserOrAssistant && hasContent && isNotInternalPrompt && isNotToolMessage;
-    } );
+    // Stored history already holds only readable turns, but a session written
+    // before the provider change can still carry an internal synthesis prompt.
+    const cleanHistory = history.filter( m =>
+        isString( m.content ) && !m.content.includes( '# ISTRUZIONI DI OUTPUT' )
+    );
     res.json( { history: cleanHistory } );
 } );
 
@@ -413,86 +469,88 @@ app.post( '/api/chat', async ( req, res ) => {
         ? sessionId
         : `sid_${crypto.randomUUID()}`;
 
-    let history = getSessionHistory( effectiveSessionId );
-    history.push( { role: "user", content: message } );
+    const history = getSessionHistory( effectiveSessionId );
+    const messages = [...history, { role: "user", content: message }];
 
     try {
+        let reply = '';
+
         /**
-         * Function definition for the 'cerca_corsi' tool (RAG Search).
-         * Instructs the LLM on which parameters to extract from the user profile.
+         * One tool round trip: the orientation expert searches the catalog, then
+         * synthesizes what it found. Anything beyond that is a loop, not an answer.
          */
-        const tools = [{
-            type: "function",
-            function: {
-                name: "cerca_corsi",
-                description: "Interroga il database IncluDO per trovare i corsi ideali.",
-                parameters: {
-                    type: "object",
-                    properties: {
-                        search_query: { type: "string" },
-                        user_profile: {
-                            type: "object",
-                            properties: {
-                                area: { type: "string", enum: ["Legno", "Tessuti", "Ceramica", "Pelle", "Natura"] },
-                                level: { type: "string", enum: ["Principiante", "Intermedio", "Avanzato"] },
-                                objective: { type: "string", enum: ["Lavoro", "Hobby"] },
-                                modality: { type: "string", enum: ["Presenza", "Remoto"] },
-                                hours: { type: "number" }
-                            },
-                            required: ["area", "level", "objective", "modality", "hours"]
-                        }
-                    },
-                    required: ["search_query", "user_profile"]
-                }
+        for ( let turn = 0; turn < MAX_TOOL_TURNS; turn++ ) {
+            const response = await getChatResponse( {
+                messages,
+                system: buildSystemPrompt(),
+                tools: [SEARCH_COURSES_TOOL]
+            } );
+
+            const text = extractText( response );
+            if ( text ) reply = text;
+
+            if ( response.stop_reason !== 'tool_use' ) break;
+
+            const toolUses = extractToolUses( response );
+            if ( toolUses.length === 0 ) break;
+
+            messages.push( { role: 'assistant', content: response.content } );
+
+            const toolResults = [];
+            let profile = null;
+
+            for ( const use of toolUses ) {
+                const args = use.input || {};
+                // Fall back to the raw message if the model did not phrase a query
+                const query = isString( args.search_query ) ? args.search_query : message;
+
+                // Perform vector search in the course database, locally
+                const vector = await generateEmbedding( query );
+                const matches = searchVectors( vector, 10 ).map( m => m.metadata );
+
+                if ( args.user_profile ) profile = args.user_profile;
+
+                toolResults.push( {
+                    type: 'tool_result',
+                    tool_use_id: use.id,
+                    content: JSON.stringify( matches )
+                } );
             }
-        }];
 
-        // Step 1: Initial call to retrieve AI response or tool invocation
-        const response = await getChatResponse( history, "gpt-4o-mini", tools );
-        let aiMessage = response.choices[0].message;
-
-        // Step 2: Handle Tool Request (RAG Search)
-        if ( aiMessage.tool_calls ) {
-            const toolCall = aiMessage.tool_calls[0];
-            const args = JSON.parse( toolCall.function.arguments );
-
-            // Perform vector search in the course database
-            const vector = await generateEmbedding( args.search_query );
-            const matches = searchVectors( vector, 10 ).map( m => m.metadata );
-
-            // Step 3: Synthesis - Generate final oriented response using the retrieved context
-            const synthesisContext = [
-                ...history,
-                aiMessage,
-                { role: "tool", tool_call_id: toolCall.id, content: JSON.stringify( matches ) },
-                { 
-                  role: "system", 
-                  content: "ESPERTO ORIENTATORE: Sintetizza i risultati. CONSIGLIA SOLO I 2 CORSI MIGLIORI. USA OBBLIGATORIAMENTE UNA TABELLA MARKDOWN CON LE BARRE '|'. Nelle colonne 'Ore' inserisci sempre le ore SETTIMANALI (weekly_hours), non quelle totali. ESEMPIO: | Titolo | Ore/sett | Match | \n | :--- | :--- | :--- | \n | Nome | 6h | 80% |. Sii sintetico e non ripetere saluti." 
-                },
-                { role: "user", content: buildResultsPrompt( args.user_profile, matches ) }
-            ];
-
-            const finalResponse = await getChatResponse( synthesisContext, "gpt-4o-mini" );
-            aiMessage = finalResponse.choices[0].message;
+            /**
+             * Results and synthesis instructions travel in a single user message,
+             * results first. Splitting tool results across messages teaches the
+             * model to stop asking for more than one search per turn.
+             */
+            messages.push( {
+                role: 'user',
+                content: [...toolResults, { type: 'text', text: buildResultsPrompt( profile ) }]
+            } );
         }
+
+        if ( !isString( reply ) ) {
+            throw new Error( 'Empty completion: no text block returned' );
+        }
+
+        // Persist only the readable turns; tool bookkeeping is per-request
+        const persisted = [
+            ...history,
+            { role: 'user', content: message },
+            { role: 'assistant', content: reply }
+        ];
 
         // Keep history concise to maintain context within token limits
-        history.push( aiMessage );
-        if ( history.length > MAX_SESSION_MESSAGES ) {
-            history = [history[0], ...history.slice( -( MAX_SESSION_MESSAGES - 2 ) )];
-        }
-
-        // Update session state in memory and persist to disk
-        setSessionHistory( effectiveSessionId, history );
+        setSessionHistory( effectiveSessionId, persisted.slice( -MAX_SESSION_MESSAGES ) );
         saveSessions();
 
         res.json( {
-            reply: aiMessage.content,
+            reply,
             sessionId: effectiveSessionId
         } );
     } catch ( error ) {
-        console.error( "Chat sequence error:", error );
-        res.status( 500 ).json( { error: "Errore nell'elaborazione della risposta AI." } );
+        const failure = describeFailure( error );
+        console.error( `Chat sequence error (${failure.category}):`, error.message );
+        res.status( 500 ).json( { error: failure.message } );
     }
 } );
 

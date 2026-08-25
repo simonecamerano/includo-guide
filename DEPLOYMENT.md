@@ -33,7 +33,7 @@ Configure these in Coolify for the backend service:
 
 | Variable             | Description                                             |
 | -------------------- | ------------------------------------------------------- |
-| `OPENAI_API_KEY`     | Your OpenAI API key (required for RAG and Chat).        |
+| `ANTHROPIC_API_KEY`  | Anthropic API key, used for text generation only.       |
 | `ADMIN_INGEST_TOKEN` | A secret string used to authorize data synchronization. |
 | `PORT`               | Set to `3001` (default).                                |
 | `NODE_ENV`           | Set to `production`.                                    |

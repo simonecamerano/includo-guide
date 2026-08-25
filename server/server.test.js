@@ -9,26 +9,27 @@ import { describe, expect, it, vi } from 'vitest';
 import { app } from './server.js';
 
 /**
- * MOCK OPENAI: Prevents real API calls during testing.
+ * MOCK ANTHROPIC: Prevents real API calls during testing.
  * This ensures tests are deterministic, fast, and cost-free.
+ *
+ * The mocked client mirrors the shape the code actually reads: a message with a
+ * content array of blocks and a stop_reason, not a single message object. The
+ * typed error classes are re-declared because describeFailure matches on them.
  */
-vi.mock( 'openai', () => {
-  return {
-    default: vi.fn().mockImplementation( () => ( {
-      chat: {
-        completions: {
-          create: vi.fn().mockResolvedValue( {
-            choices: [{ message: { content: "Mocked AI Response" } }]
-          } )
-        }
-      },
-      embeddings: {
-        create: vi.fn().mockResolvedValue( {
-          data: [{ embedding: Array( 1536 ).fill( 0.1 ) }]
-        } )
-      }
-    } ) )
-  };
+vi.mock( '@anthropic-ai/sdk', () => {
+  class MockAPIError extends Error {}
+  const AnthropicMock = vi.fn().mockImplementation( () => ( {
+    messages: {
+      create: vi.fn().mockResolvedValue( {
+        stop_reason: 'end_turn',
+        content: [{ type: 'text', text: "Mocked AI Response" }]
+      } )
+    }
+  } ) );
+  AnthropicMock.RateLimitError = class extends MockAPIError {};
+  AnthropicMock.AuthenticationError = class extends MockAPIError {};
+  AnthropicMock.APIConnectionError = class extends MockAPIError {};
+  return { default: AnthropicMock };
 } );
 
 describe( 'Backend API Lifecycle & Security', () => {
@@ -36,6 +37,12 @@ describe( 'Backend API Lifecycle & Security', () => {
   // Configuration for test isolation
   process.env.ADMIN_INGEST_TOKEN = 'test-admin-token';
   process.env.SKIP_COURSES_WRITE = '1';
+  // The key is never used: the SDK is mocked. It only has to be present, because
+  // the bridge refuses to call a provider it has no credentials for.
+  process.env.ANTHROPIC_API_KEY = 'test-anthropic-key';
+  // Deterministic vectors instead of loading the real model in unit tests.
+  // The real retrieval path is verified against the running server, not here.
+  process.env.EMBEDDINGS_BACKEND = 'mock';
 
   /** 
    * Session History Persistence

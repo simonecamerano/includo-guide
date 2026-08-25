@@ -70,7 +70,7 @@ cd ../client && npm install
 
 # 2. Configure environment
 cp server/.env.example server/.env
-# Fill in OPENAI_API_KEY and ADMIN_INGEST_TOKEN
+# Fill in ANTHROPIC_API_KEY and ADMIN_INGEST_TOKEN
 
 # 3. Seed the vector store
 cd server && ADMIN_INGEST_TOKEN=your_secret node scripts/seed.js
@@ -88,7 +88,9 @@ cd client && npm run dev
 
 | Variable | Description |
 |---|---|
-| `OPENAI_API_KEY` | OpenAI API key for chat completions + embeddings |
+| `ANTHROPIC_API_KEY` | Anthropic API key, for text generation only. Embeddings run locally and need no key |
+| `EMBEDDING_MODEL` | Local embedding model (default `Xenova/multilingual-e5-small`) |
+| `EMBEDDING_CACHE_DIR` | Where the model weights live (default `./.models`) |
 | `ADMIN_INGEST_TOKEN` | Shared secret for `/api/admin/ingest` |
 | `SESSIONS_DIR` | Filesystem path for session persistence |
 | `SESSION_TTL_MS` | Max inactivity time before session expiry |
