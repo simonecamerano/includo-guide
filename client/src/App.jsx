@@ -1,6 +1,6 @@
 import axios from 'axios';
 import { AnimatePresence, motion as Motion } from 'framer-motion';
-import { Loader2, RotateCcw, Send, Sparkles, User } from 'lucide-react';
+import { Bot, Loader2, RotateCcw, Send, Sparkles, User } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -89,7 +89,7 @@ function App() {
         } else {
           setMessages( [{
             role: 'assistant',
-            content: "Ciao! Benvenuto in IncluDO Guide. Sono qui per aiutarti a scoprire il tuo talento artigianale. Le nostre aree di eccellenza sono: **Legno, Tessuti, Ceramica, Pelle e Natura**. Dimmi pure: quale di queste ti piacerebbe esplorare?"
+            content: "Ciao! Benvenuto in IncluDO Guide. Sono un **sistema di intelligenza artificiale**, non una persona, e posso sbagliare: verifica sempre le informazioni importanti. Sono qui per aiutarti a scoprire il tuo talento artigianale. Le nostre aree di eccellenza sono: **Legno, Tessuti, Ceramica, Pelle e Natura**. Dimmi pure: quale di queste ti piacerebbe esplorare?"
           }] );
         }
       } catch ( err ) {
@@ -110,7 +110,7 @@ function App() {
       await axios.post( `${API_BASE}/reset`, { sessionId } );
       setMessages( [{
         role: 'assistant',
-        content: "Reset completato! Iniziamo da zero. Le nostre aree sono: **Legno, Tessuti, Ceramica, Pelle e Natura**. Quale ti incuriosisce di più?"
+        content: "Reset completato, la conversazione precedente è stata eliminata dal server. Ricomincio da zero, sempre come **sistema di intelligenza artificiale**. Le nostre aree sono: **Legno, Tessuti, Ceramica, Pelle e Natura**. Quale ti incuriosisce di più?"
       }] );
       setShowResetModal( false );
     } catch ( err ) {
@@ -139,7 +139,14 @@ function App() {
       setMessages( prev => [...prev, { role: 'assistant', content: data.reply }] );
     } catch ( err ) {
       console.error( "Chat error:", err );
-      setMessages( prev => [...prev, { role: 'assistant', content: "Errore di connessione. Riprova!" }] );
+      // Use the reason the server gave, when it gave one: it distinguishes a rate
+      // limit from a misconfiguration from a network failure, and "riprova" is not
+      // useful advice for all three.
+      const serverMessage = err.response?.data?.error;
+      setMessages( prev => [...prev, {
+        role: 'assistant',
+        content: serverMessage || "Errore di connessione. Riprova!"
+      }] );
     } finally {
       setIsLoading( false );
     }
@@ -161,6 +168,17 @@ function App() {
             <RotateCcw size={ 16 } aria-hidden="true" /> Nuova Chat
           </button>
         </div>
+        {/* Dichiarazione di trasparenza richiesta dall'art. 50 del Regolamento UE
+            2024/1689: chi usa l'applicazione deve sapere, senza doverlo dedurre,
+            che sta interagendo con un sistema di intelligenza artificiale. */}
+        <p className="ai-disclosure">
+          <Bot size={ 14 } aria-hidden="true" />
+          <span>
+            Stai parlando con un <strong>sistema di intelligenza artificiale</strong>, non con una
+            persona. Le risposte possono contenere errori.{ ' ' }
+            <a href="/privacy">Come trattiamo i tuoi dati</a>
+          </span>
+        </p>
       </header>
 
       <main className="chat-window" role="log" aria-live="polite">

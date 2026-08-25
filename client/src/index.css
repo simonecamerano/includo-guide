@@ -458,3 +458,133 @@ p.tagline {
   width: 80px;
   background: white;
 }
+
+/*
+ * -----------------------------------------------------------------------------
+ * 10. AI TRANSPARENCY DISCLOSURE
+ * -----------------------------------------------------------------------------
+ * Sempre visibile sopra la conversazione: l'art. 50 del Regolamento UE 2024/1689
+ * chiede che sia chiaro di stare interagendo con un sistema di IA, quindi non
+ * puo' essere una nota che si chiude o che sta solo nell'informativa.
+ */
+.ai-disclosure {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+  padding: 0.625rem 0.875rem;
+  background: rgba(211, 84, 0, 0.07);
+  border-left: 3px solid var(--primary);
+  border-radius: 8px;
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  color: var(--secondary);
+}
+
+.ai-disclosure svg {
+  flex-shrink: 0;
+  margin-top: 0.15rem;
+  color: var(--primary);
+}
+
+.ai-disclosure a {
+  color: var(--primary);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/*
+ * -----------------------------------------------------------------------------
+ * 11. LEGAL PAGE (informativa privacy)
+ * -----------------------------------------------------------------------------
+ */
+.legal-page {
+  height: 100dvh;
+  overflow-y: auto;
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 2rem 1.5rem 4rem;
+}
+
+.legal-header {
+  border-bottom: 2px solid rgba(44, 62, 80, 0.12);
+  padding-bottom: 1.25rem;
+  margin-bottom: 2rem;
+}
+
+.legal-back,
+.legal-footer a {
+  display: inline-block;
+  color: var(--primary);
+  font-weight: 600;
+  text-decoration: none;
+  margin-bottom: 1rem;
+}
+
+.legal-back:hover,
+.legal-footer a:hover {
+  text-decoration: underline;
+}
+
+.legal-header h1 {
+  font-size: clamp(1.5rem, 4vw, 2rem);
+  line-height: 1.25;
+  color: var(--secondary);
+}
+
+.legal-updated {
+  margin-top: 0.5rem;
+  font-size: 0.875rem;
+  color: #6b7280;
+}
+
+.legal-content section {
+  margin-bottom: 2rem;
+}
+
+.legal-content h2 {
+  font-size: 1.125rem;
+  color: var(--primary);
+  margin-bottom: 0.75rem;
+}
+
+.legal-content p,
+.legal-content li {
+  line-height: 1.65;
+  font-size: 0.9375rem;
+}
+
+.legal-content p + p {
+  margin-top: 0.75rem;
+}
+
+.legal-content ul {
+  padding-left: 1.25rem;
+  margin-top: 0.5rem;
+}
+
+.legal-content li + li {
+  margin-top: 0.625rem;
+}
+
+.legal-content a {
+  color: var(--primary);
+}
+
+.legal-content code {
+  background: rgba(44, 62, 80, 0.08);
+  padding: 0.1rem 0.35rem;
+  border-radius: 4px;
+  font-size: 0.875em;
+}
+
+.legal-footer {
+  border-top: 2px solid rgba(44, 62, 80, 0.12);
+  padding-top: 1.25rem;
+}
+
+@media (max-width: 600px) {
+  .ai-disclosure a {
+    white-space: normal;
+  }
+}
